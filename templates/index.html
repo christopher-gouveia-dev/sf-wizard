@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SF Wizard - Salesforce Utility</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+</head>
+<body class="bg-gray-50">
+    <div id="app">
+        <!-- Header -->
+        <header class="bg-white shadow-sm border-b border-gray-200">
+            <div class="max-w-7xl mx-auto px-6 py-4">
+                <h1 class="text-3xl font-bold text-gray-900">SF Wizard</h1>
+                <p class="text-gray-600 mt-1">Salesforce Utility - Generate WHERE IN queries for Excel</p>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="max-w-7xl mx-auto px-6 py-8">
+            <!-- Error/Success Messages -->
+            <div v-if="message" :class="['mb-6 p-4 rounded-lg', message.type === 'error' ? 'bg-red-50 border border-red-200 text-red-800' : 'bg-green-50 border border-green-200 text-green-800']">
+                {{ message.text }}
+            </div>
+
+            <!-- Section: Workspace Management -->
+            <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+                <h2 class="text-2xl font-semibold text-gray-900 mb-6">Workspace</h2>
+
+                <div class="space-y-6">
+                    <!-- Existing Workspaces -->
+                    <div v-if="workspaces.length > 0" class="border-b pb-6">
+                        <h3 class="text-lg font-medium text-gray-900 mb-4">Existing workspaces</h3>
+                        <div class="space-y-3">
+                            <label v-for="ws in workspaces" :key="ws.name" class="flex items-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer">
+                                <input
+                                    type="radio"
+                                    v-model="selectedWorkspace"
+                                    :value="ws.name"
+                                    class="w-4 h-4 text-blue-600"
+                                >
+                                <span class="ml-3 flex-1">
+                                    <span class="font-medium text-gray-900">{{ ws.name }}</span>
+                                    <span class="text-gray-600 ml-2">{{ ws.file }}</span>
+                                </span>
+                                <div class="ml-4">
+                                    <button v-if="selectedWorkspace===ws.name" @click.prevent="chooseWorkspace('continue')" class="text-sm text-blue-600 mr-2">Continue</button>
+                                    <button v-if="selectedWorkspace===ws.name" @click.prevent="chooseWorkspace('new')" class="text-sm text-gray-600">New Excel</button>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Excel Upload -->
+                    <div v-if="showUploadSection" class="border-t pt-6">
+                        <h3 class="text-lg font-medium text-gray-900 mb-4">Excel to use</h3>
+                        <div class="space-y-4">
+                            <input
+                                type="text"
+                                v-model="newWorkspaceName"
+                                placeholder="Nom du workspace (ou workspace existant)"
+                                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            >
+                            <div class="flex items-center justify-center border-2 border-dashed border-gray-300 rounded-lg p-8 hover:border-blue-400 transition"
+                                 @dragover.prevent="isDragging = true"
+                                 @dragleave="isDragging = false"
+                                 @drop.prevent="handleFileDrop">
+                                <div class="text-center">
+                                    <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                                        <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-12l-3.172-3.172a4 4 0 00-5.656 0L28 16M9 20l3.172-3.172a4 4 0 015.656 0L28 28"></path>
+                                    </svg>
+                                    <p class="mt-2 text-sm text-gray-600">
+                                        <button type="button" @click="$refs.fileInput.click()" class="text-blue-600 hover:text-blue-700 font-medium">
+                                            Cliquez pour télécharger
+                                        </button>
+                                        ou glissez-déposez un fichier Excel
+                                    </p>
+                                    <input
+                                        ref="fileInput"
+                                        type="file"
+                                        accept=".xlsx,.xls"
+                                        @change="handleFileSelect"
+                                        class="hidden"
+                                    >
+                                </div>
+                            </div>
+                            <div v-if="selectedFile" class="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                                <span class="text-blue-900">{{ selectedFile.name }}</span>
+                                <button @click="selectedFile = null" class="text-blue-600 hover:text-blue-800">✕</button>
+                            </div>
+                        </div>
+                    </div>
+
+                        <!-- Validation Button -->
+                        <div class="pt-4 border-t">
+                            <button
+                                @click="validateWorkspace"
+                                :disabled="!newWorkspaceName && !selectedWorkspace || (!selectedWorkspace && !selectedFile)"
+                                class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white font-medium py-2 px-4 rounded-lg transition"
+                            >
+                                Confirm workspace
+                            </button>
+                        </div>
+                </div>
+            </div>
+
+            <!-- Section: WHERE IN Generator -->
+            <div v-if="currentWorkspace" class="bg-white rounded-lg shadow-md p-6">
+                <div class="mb-6">
+                    <h2 class="text-2xl font-semibold text-gray-900">New WHERE IN generator</h2>
+                    <p class="text-gray-600 mt-2">
+                        Workspace: <span class="font-medium">{{ currentWorkspace }}</span>
+                        <span v-if="currentFile"> | File: <span class="font-medium">{{ currentFile }}</span></span>
+                    </p>
+                </div>
+
+                <form @submit.prevent="generateWhereIn" class="space-y-6">
+                    <!-- Generator Name -->
+                    <div>
+                        <label for="gen_name" class="block text-sm font-medium text-gray-900 mb-2">
+                            Name of the generator
+                        </label>
+                        <input
+                            id="gen_name"
+                            v-model="form.generator_name"
+                            type="text"
+                            required
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="Ex: Clients, Accounts..."
+                        >
+                    </div>
+
+                    <!-- Source with Dropdown -->
+                    <div>
+                        <label for="source" class="block text-sm font-medium text-gray-900 mb-2">
+                            Source Ids column
+                        </label>
+                        <div class="relative">
+                            <input
+                                id="source"
+                                v-model="form.source"
+                                type="text"
+                                required
+                                @input="updateSourceSuggestions"
+                                @focus="showSuggestions = true"
+                                @blur="onSourceBlur"
+                                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="Table[Col] or Sheet!A:A"
+                            >
+                            <div v-if="showSuggestions && filteredColumns.length > 0" class="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg">
+                                <button
+                                    v-for="col in filteredColumns"
+                                    :key="col"
+                                    type="button"
+                                    @click="form.source = col; showSuggestions = false"
+                                    class="w-full text-left px-4 py-2 hover:bg-gray-100 first:rounded-t-lg last:rounded-b-lg"
+                                >
+                                    {{ col }}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Has Header (conditional) -->
+                    <div v-if="isSheetSource" class="flex items-center">
+                        <input
+                            id="has_header"
+                            v-model="form.has_header"
+                            type="checkbox"
+                            class="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                        >
+                        <label for="has_header" class="ml-3 text-sm font-medium text-gray-900">
+                            With header
+                        </label>
+                    </div>
+
+                    <!-- WHERE Column -->
+                    <div>
+                        <label for="where_col" class="block text-sm font-medium text-gray-900 mb-2">
+                            Column name for WHERE IN
+                        </label>
+                        <input
+                            id="where_col"
+                            v-model="form.where_col"
+                            type="text"
+                            required
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="Ex: Account Id..."
+                        >
+                    </div>
+
+                    <!-- SOQL Base -->
+                    <div>
+                        <label for="soql_base" class="block text-sm font-medium text-gray-900 mb-2">
+                            SOQL base request
+                        </label>
+                        <textarea
+                            id="soql_base"
+                            v-model="form.soql_base"
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+                            placeholder="SELECT Id, Name FROM Account WHERE Id IN"
+                            rows="3"
+                        ></textarea>
+                    </div>
+
+                    <!-- Submit Button -->
+                    <div class="pt-4 border-t">
+                        <button
+                            type="submit"
+                            :disabled="isGenerating"
+                            class="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white font-medium py-2 px-4 rounded-lg transition"
+                        >
+                            {{ isGenerating ? 'Génération en cours...' : 'Générer' }}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                return {
+                    workspaces: [],
+                    selectedWorkspace: null,
+                    newWorkspaceName: '',
+                    selectedFile: null,
+                    currentWorkspace: null,
+                    currentFile: null,
+                    isDragging: false,
+                    showSuggestions: false,
+                    isGenerating: false,
+                    columns: [],
+                    message: null,
+                    form: {
+                        generator_name: '',
+                        source: '',
+                        has_header: false,
+                        where_col: '',
+                        soql_base: ''
+                    }
+                };
+            },
+            computed: {
+                isTableSource() {
+                    return this.form.source.includes('[') && this.form.source.endsWith(']');
+                },
+                isSheetSource() {
+                    return this.form.source.includes('!') && !this.isTableSource;
+                },
+                filteredColumns() {
+                    if (!this.form.source) return this.columns;
+                    const query = this.form.source.toLowerCase();
+                    return this.columns.filter(col => col.toLowerCase().includes(query)).slice(0, 8);
+                }
+            },
+            methods: {
+                async loadWorkspaces() {
+                    try {
+                        const response = await fetch('/api/workspaces');
+                        const data = await response.json();
+                        if (data.success) {
+                            this.workspaces = data.workspaces;
+                        }
+                    } catch (error) {
+                        this.showMessage('Error loading workspaces: ' + error, 'error');
+                    }
+                },
+                handleFileSelect(event) {
+                    const files = event.target.files;
+                    if (files.length > 0) {
+                        this.selectedFile = files[0];
+                    }
+                },
+                handleFileDrop(event) {
+                    this.isDragging = false;
+                    const files = event.dataTransfer.files;
+                    if (files.length > 0) {
+                        this.selectedFile = files[0];
+                    }
+                },
+                chooseWorkspace(mode) {
+                    // mode: 'continue' or 'new'
+                    if (!this.selectedWorkspace) return;
+                    if (mode === 'continue') {
+                        this.newWorkspaceName = this.selectedWorkspace;
+                        this.showUploadSection = false;
+                        this.currentWorkspace = this.selectedWorkspace;
+                        this.getWorkspaceInfo(this.selectedWorkspace).then(info => {
+                            this.currentFile = info.current_file;
+                            this.loadColumns();
+                        }).catch(err => this.showMessage('Error: '+err, 'error'));
+                    } else if (mode === 'new') {
+                        this.newWorkspaceName = this.selectedWorkspace;
+                        this.showUploadSection = true;
+                    }
+                },
+                onSourceBlur() {
+                    // Close suggestions after small delay so click on suggestion registers
+                    setTimeout(() => { this.showSuggestions = false; }, 180);
+                },
+                async validateWorkspace() {
+                    try {
+                        if (!this.newWorkspaceName) {
+                            this.showMessage('Enter a workspace name', 'error');
+                            return;
+                        }
+
+                        // If file provided -> upload and create/update workspace
+                        if (this.selectedFile) {
+                            const formData = new FormData();
+                            formData.append('excel', this.selectedFile);
+                            formData.append('workspace_name', this.newWorkspaceName);
+
+                            const response = await fetch('/api/upload-excel', {
+                                method: 'POST',
+                                body: formData
+                            });
+
+                            const data = await response.json();
+                            if (data.success) {
+                                this.currentWorkspace = this.newWorkspaceName;
+                                this.currentFile = this.selectedFile.name;
+                                this.showUploadSection = false;
+                                this.showMessage('Workspace created/updated', 'success');
+                            } else {
+                                this.showMessage(data.error || 'Upload error', 'error');
+                                return;
+                            }
+                        } else if (this.selectedWorkspace) {
+                            // Continue with existing workspace
+                            this.currentWorkspace = this.selectedWorkspace;
+                            const info = await this.getWorkspaceInfo(this.selectedWorkspace);
+                            // if current_file missing, attempt to pick latest version file
+                            this.currentFile = info.current_file || info.latest_version_file || null;
+                            this.showUploadSection = false;
+                        }
+
+                        // Load columns
+                        if (this.currentWorkspace) {
+                            await this.loadColumns();
+                        }
+                    } catch (error) {
+                        this.showMessage('Error: ' + error, 'error');
+                    }
+                },
+                async getWorkspaceInfo(workspace) {
+                    const response = await fetch(`/api/workspace-info?workspace=${workspace}`);
+                    const data = await response.json();
+                    if (data.success) {
+                        return data.info;
+                    }
+                    throw new Error(data.error);
+                },
+                async loadColumns() {
+                    try {
+                        const response = await fetch(`/api/columns?workspace=${this.currentWorkspace}`);
+                        const data = await response.json();
+                        if (data.success) {
+                            this.columns = data.columns;
+                        }
+                    } catch (error) {
+                        this.showMessage('Error loading columns: ' + error, 'error');
+                    }
+                },
+                updateSourceSuggestions() {
+                    this.showSuggestions = this.form.source.length > 0;
+                },
+                async generateWhereIn() {
+                    try {
+                        this.isGenerating = true;
+
+                        const response = await fetch('/api/generate-where-in', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                workspace: this.currentWorkspace,
+                                generator_name: this.form.generator_name,
+                                source: this.form.source,
+                                where_col: this.form.where_col,
+                                has_header: this.form.has_header,
+                                soql_base: this.form.soql_base
+                            })
+                        });
+
+                        const data = await response.json();
+                        if (data.success) {
+                            this.showMessage(`Générateur créé: ${data.version}`, 'success');
+                            // Reset form
+                            this.form = {
+                                generator_name: '',
+                                source: '',
+                                has_header: false,
+                                where_col: '',
+                                soql_base: ''
+                            };
+                        } else {
+                            this.showMessage(data.error || 'Erreur lors de la génération', 'error');
+                        }
+                    } catch (error) {
+                        this.showMessage('Error: ' + error, 'error');
+                    } finally {
+                        this.isGenerating = false;
+                    }
+                },
+                showMessage(text, type = 'info') {
+                    this.message = { text, type };
+                    setTimeout(() => {
+                        this.message = null;
+                    }, 5000);
+                }
+            },
+            mounted() {
+                this.loadWorkspaces();
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
