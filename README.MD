@@ -1,213 +1,117 @@
-# SF Wizard - Salesforce Utility
+# SF Wizard (sf-wizard) — v0.1.0
 
-A lightweight, modern Salesforce utility tool for generating WHERE IN queries from Excel files and managing Salesforce metadata operations.
+SF Wizard is a **local** companion tool for Salesforce developers and release managers.
 
-## Features
+This version (v0.1.0) focuses on a single vertical slice:
+- Detect the currently connected Salesforce orgs via **SF CLI**
+- Select an org and run **SOQL queries** (API) via SF CLI
+- Show results and logs, with a **Copy Excel** button
 
-- **WHERE IN Query Generator**: Generate `WHERE IN` queries from Excel columns
-- **Workspace Management**: Organize and track multiple Excel projects
-- **Version Control**: Automatic versioning of generated files
-- **Modern UI**: Vue 3 + Tailwind CSS with CDN (no build step required)
-- **Minimal Dependencies**: Uses only stdlib for server (http.server) + openpyxl for Excel
+> UI language is **English** by design.
+
+---
 
 ## Requirements
 
-- Python 3.8+
-- openpyxl (for Excel handling)
-- et-xmlfile (dependency of openpyxl)
+### Option A — Run with Docker (recommended)
+- Docker + Docker Compose
+- Internet access to build images (first run)
 
-## Installation
+### Option B — Run without Docker
+- Python **3.10+**
+- Node.js **18+**
+- Salesforce CLI (`sf`) installed and authenticated
 
-### Quick Setup
+---
 
-```bash
-python install.py
-```
+## Run with Docker
 
-This script will:
-- Show you the estimated download size for all dependencies
-- Ask for confirmation before installing
-- Install required packages with pip
-- Display installation summary
-
-### Manual Installation
-
-If you prefer manual setup:
+From the repository root:
 
 ```bash
-pip install openpyxl et-xmlfile
+docker compose -f docker/compose.yml up --build
 ```
 
-## Usage
+Open:
+- Web UI: http://localhost:5173
+- API Health: http://localhost:8000/api/health
 
-### Starting the Server
+> SF CLI auth is persisted by mounting your local `~/.sf` into the container.
+> If your orgs are not listed, run `sf org list` on your machine first, or authenticate.
+
+Stop:
 
 ```bash
-python app.py
+docker compose -f docker/compose.yml down
 ```
 
-The application will start at `http://localhost:8000`
+---
 
-### Project Structure
+## Run without Docker
 
-```
-v2-work/
-├── app.py                    # Main server (http.server + routing)
-├── workspace_manager.py      # Workspace and Excel management
-├── excel_generator.py        # WHERE IN query generation logic
-├── install.py               # Dependency installer
-├── requirements.txt         # Python dependencies (reference only)
-├── README.md               # This file
-├── templates/
-│   └── index.html          # Vue 3 + Tailwind UI
-└── excel-files/            # Workspace data directory (auto-created)
-    └── [workspace-name]/
-        ├── original/       # Original uploaded file
-        ├── current/        # Currently active file
-        └── versions/       # Generated versions
+### 1) Backend (FastAPI)
+
+```bash
+cd apps/api
+python -m venv .venv
+# macOS/Linux:
+source .venv/bin/activate
+# Windows PowerShell:
+# .venv\Scripts\Activate.ps1
+
+pip install -r requirements.txt
+uvicorn sf_wizard.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-## Workflow
+### 2) Frontend (Vite)
 
-### 1. Create a Workspace
+In another terminal:
 
-- Enter a workspace name
-- Upload an Excel file (.xlsx or .xls)
-- The system creates: `original/`, `current/`, and `versions/` directories
-
-### 2. Generate WHERE IN Query
-
-- Select a source column from your Excel file
-- Provide a name for the generator
-- Specify the WHERE column name
-- Optionally add base SOQL query
-- Click "Generate" to create a versioned file
-
-### 3. Version Management
-
-Generated files are automatically versioned:
-- Format: `{workspace}_v{N}_{generator_name}.xlsx`
-- Each generation creates a new version
-
-## Features Details
-
-### Workspace Management
-
-- **List existing workspaces**: See all previously created projects
-- **Create new workspace**: Upload Excel files and organize by project
-- **Auto-versioning**: All generated files are automatically versioned
-
-### Column Detection
-
-The system automatically detects:
-- **Named tables**: `TableName[ColumnName]`
-- **Sheet columns**: `SheetName!A:A`
-- Provides autocomplete suggestions when entering source
-
-### Query Generation
-
-Supports multiple source formats:
-- Excel tables with structured references
-- Regular sheet columns with headers
-- Automatic UNIQUE and FILTER formulas
-
-## Architecture
-
-### Backend (Python)
-
-- **http.server**: Standard library HTTP server
-- **Custom routing**: Simple, maintainable routing system
-- **No external framework**: Minimal dependencies
-
-### Frontend (JavaScript)
-
-- **Vue 3**: Progressive JavaScript framework (CDN)
-- **Tailwind CSS**: Utility-first CSS framework (CDN)
-- **No build step**: All code runs directly in browser
-
-## API Endpoints
-
-### GET Endpoints
-
-- `GET /api/workspaces` - List all workspaces
-- `GET /api/workspace-info?workspace={name}` - Get workspace details
-- `GET /api/columns?workspace={name}` - Get available columns from Excel
-
-### POST Endpoints
-
-- `POST /api/upload-excel` - Upload/create new workspace
-- `POST /api/generate-where-in` - Generate WHERE IN query
-
-## Future Enhancements
-
-- Bulk API integration for executing queries
-- Salesforce metadata deployment with intelligent merging
-- Custom labels and translations handling
-- Profile and permission set management
-- Dry-run execution before actual deployment
-
-## Development Notes
-
-### Adding Dependencies
-
-Edit `install.py` to add new packages:
-
-```python
-DEPENDENCIES = {
-    "package-name": "version",
-}
+```bash
+cd apps/web
+npm install
+npm run dev
 ```
 
-### Configuration
+Open:
+- Web UI: http://localhost:5173
 
-Server host and port can be modified in `app.py`:
+The dev server proxies `/api` to `http://127.0.0.1:8000`.
 
-```python
-run_server(host="0.0.0.0", port=8000)
+---
+
+## Basic usage
+
+1. Make sure you're authenticated with SF CLI:
+   ```bash
+   sf org list
+   ```
+2. In SF Wizard, pick an org in the header dropdown.
+3. Go to **Query** and run a SOQL query.
+
+---
+
+## Project structure
+
+- `apps/api`: FastAPI backend, SF CLI orchestration
+- `apps/web`: Vue 3 + Vite + Tailwind frontend
+- `docker`: Dockerfiles + compose
+- `data`: local persisted settings/runs (mounted in Docker)
+
+---
+
+## Versioning
+
+Use annotated tags:
+
+```bash
+git tag -a v0.1.0 -m "sf-wizard v0.1.0"
+git push origin v0.1.0
 ```
 
-## Troubleshooting
+---
 
-### Port Already in Use
+## Notes
 
-Change the port in `app.py`:
-
-```python
-if __name__ == "__main__":
-    run_server(port=8001)  # Use different port
-```
-
-### Excel File Not Loading
-
-- Ensure file is valid .xlsx format
-- Check file is not corrupted
-- Try uploading the file again
-
-### Missing Columns
-
-- Verify Excel file has headers
-- Check that columns are not in hidden rows
-- Reload the workspace
-
-## License
-
-Proprietary - Salesforce Utility
-
-## Support
-
-For issues or feature requests, refer to the project documentation or contact the development team.
-
-Puis ouvrir :
-http://localhost:5000
-
-## Ce que fait la V1
-- Ajoute 2 feuilles :
-  - N - <Nom>
-  - N - SOQL <Nom>
-- Génère les requêtes WHERE IN par lot
-- Compatible Excel Online / Desktop
-
-## Limitations
-- Pas de Bulk API
-- Pas de Salesforce CLI
-- Paramètres fixes (batch=500)
+- v0.1.0 uses **SF CLI** for query execution (`sf data query`).
+- Bulk API mode is intentionally not included in v0.1.0.

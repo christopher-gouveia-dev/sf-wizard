@@ -1,0 +1,28 @@
+FROM python:3.11-slim
+
+# Install minimal deps + Node/npm to install Salesforce CLI
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl gnupg \
+    nodejs npm \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install Salesforce CLI (sf)
+RUN npm install -g @salesforce/cli
+
+WORKDIR /app
+
+# Install Python deps as root (so uvicorn ends up in /usr/local/bin)
+COPY apps/api/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# Copy app code
+COPY apps/api/sf_wizard /app/sf_wizard
+
+# Create non-root user *after* installs
+RUN useradd -ms /bin/bash app
+USER app
+
+ENV SF_WIZARD_DATA_DIR=/data
+EXPOSE 8000
+
+CMD ["uvicorn", "sf_wizard.main:app", "--host", "0.0.0.0", "--port", "8000"]

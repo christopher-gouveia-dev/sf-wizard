@@ -1,0 +1,5 @@
+[project]
+name = "sf-wizard"
+version = "0.1.0"
+description = "SF Wizard API (local-first Salesforce helper)"
+requires-python = ">=3.10"
