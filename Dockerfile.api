@@ -7,7 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
 # Install Salesforce CLI (sf)
-RUN npm install -g @salesforce/cli
+RUN npm install -g @salesforce/cli@2.115.15
+RUN sf --version
 
 WORKDIR /app
 

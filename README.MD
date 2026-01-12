@@ -25,21 +25,21 @@ This version (v0.1.0) focuses on a single vertical slice:
 ---
 
 ## Run with Docker
-
-From the repository root:
+1. Make sure Docker is running (especially if you use Docker Desktop on Windows/Mac)
+2. From the repository root:
 
 ```bash
 docker compose -f docker/compose.yml up --build
 ```
 
-Open:
+3. Open:
 - Web UI: http://localhost:5173
 - API Health: http://localhost:8000/api/health
 
 > SF CLI auth is persisted by mounting your local `~/.sf` into the container.
 > If your orgs are not listed, run `sf org list` on your machine first, or authenticate.
 
-Stop:
+4. Stop:
 
 ```bash
 docker compose -f docker/compose.yml down

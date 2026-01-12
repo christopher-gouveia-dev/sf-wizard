@@ -1,23 +1,20 @@
 services:
   api:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile.api
+      context: .
+      dockerfile: Dockerfile.api
     ports:
       - "8000:8000"
     environment:
       - SF_WIZARD_DATA_DIR=/data
     volumes:
       - ../data:/data
-      # Persist SF CLI auth (adjust if needed on Windows)
-      - ~/.sf:/home/app/.sf
-    #restart: unless-stopped
     restart: no
 
   web:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile.web
+      context: .
+      dockerfile: Dockerfile.web
     ports:
       - "5173:80"
     environment:
