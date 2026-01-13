@@ -1,29 +1,128 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
-from datetime import datetime, timezone
 
 from sf_wizard.sfcli.orgs import sf_list_orgs
-from sf_wizard.core.config import data_dir
-from sf_wizard.core.storage import read_json, write_json_atomic, ensure_dir
 
 router = APIRouter()
 
-RECENTS_FILE = "recent_orgs.json"
+# Groups returned by sf org list --json (result.*)
+GROUP_KEYS = ("scratchOrgs", "nonScratchOrgs", "other", "sandboxes", "devHubs")
 
-def _recents_path():
-    d = data_dir()
-    ensure_dir(d)
-    return d / RECENTS_FILE
 
-def _load_recents() -> Dict[str, Any]:
-    return read_json(_recents_path(), default={"last_selected_alias": None, "orgs": {}})
+def _coerce_org_id(o: Dict[str, Any]) -> Optional[str]:
+    # Some outputs may use orgId; older shapes may use id.
+    return o.get("orgId") or o.get("id")
 
-def _save_recents(data: Dict[str, Any]) -> None:
-    write_json_atomic(_recents_path(), data)
 
-class SelectOrgBody(BaseModel):
-    alias: str
+def _as_list(x: Any) -> List[Dict[str, Any]]:
+    if isinstance(x, list):
+        return [i for i in x if isinstance(i, dict)]
+    return []
+
+
+def _primary_label(aliases: List[str], username: Optional[str]) -> str:
+    if aliases:
+        return aliases[0].lower()
+    return (username or "").lower()
+
+
+def _normalize_orgs(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Convert sf org list result into a flat list:
+    [
+      {
+        orgId, username, loginUrl, instanceUrl,
+        aliases: [...],
+        isScratch, isSandbox, isDevHub,
+        isDefaultUsername, isDefaultDevHubUsername,
+        connectedStatus, lastUsed
+      },
+      ...
+    ]
+    """
+    by_org: Dict[str, Dict[str, Any]] = {}
+
+    for group_key in GROUP_KEYS:
+        for o in _as_list(result.get(group_key)):
+            org_id = _coerce_org_id(o)
+            username = o.get("username")
+            alias = o.get("alias")
+
+            # Skip entries with no orgId and no username: nothing stable to identify
+            if not org_id and not username:
+                continue
+
+            key = org_id or f"username:{username}"
+
+            existing = by_org.get(key)
+            if not existing:
+                existing = {
+                    "orgId": org_id,
+                    "username": username,
+                    "loginUrl": o.get("loginUrl"),
+                    "instanceUrl": o.get("instanceUrl"),
+                    "aliases": [],
+                    "isScratch": bool(o.get("isScratch")),
+                    "isSandbox": bool(o.get("isSandbox")),
+                    "isDevHub": bool(o.get("isDevHub")),
+                    "isDefaultUsername": bool(o.get("isDefaultUsername") or o.get("isDefault")),
+                    "isDefaultDevHubUsername": bool(o.get("isDefaultDevHubUsername")),
+                    "connectedStatus": o.get("connectedStatus"),
+                    "lastUsed": o.get("lastUsed"),
+                }
+                by_org[key] = existing
+
+            # Merge fields if missing
+            if not existing.get("orgId") and org_id:
+                existing["orgId"] = org_id
+            if not existing.get("username") and username:
+                existing["username"] = username
+            if not existing.get("loginUrl") and o.get("loginUrl"):
+                existing["loginUrl"] = o.get("loginUrl")
+            if not existing.get("instanceUrl") and o.get("instanceUrl"):
+                existing["instanceUrl"] = o.get("instanceUrl")
+
+            # Merge flags
+            existing["isScratch"] = bool(existing.get("isScratch") or o.get("isScratch"))
+            existing["isSandbox"] = bool(existing.get("isSandbox") or o.get("isSandbox"))
+            existing["isDevHub"] = bool(existing.get("isDevHub") or o.get("isDevHub"))
+            existing["isDefaultUsername"] = bool(existing.get("isDefaultUsername") or o.get("isDefaultUsername") or o.get("isDefault"))
+            existing["isDefaultDevHubUsername"] = bool(existing.get("isDefaultDevHubUsername") or o.get("isDefaultDevHubUsername"))
+
+            # lastUsed: keep the max lexicographically if both are ISO strings
+            lu = o.get("lastUsed")
+            if lu and (not existing.get("lastUsed") or str(lu) > str(existing["lastUsed"])):
+                existing["lastUsed"] = lu
+
+            # aliases: collect unique
+            if alias:
+                aliases = existing.setdefault("aliases", [])
+                if alias not in aliases:
+                    aliases.append(alias)
+
+    # Sort aliases within each org (stable display)
+    for org in by_org.values():
+        org["aliases"] = sorted(org.get("aliases") or [], key=lambda s: s.lower())
+
+    orgs = list(by_org.values())
+
+    # Sort orgs: default usernames first, then lastUsed desc, then label
+    def sort_key(o: Dict[str, Any]):
+        is_def = 0 if o.get("isDefaultUsername") else 1
+        # lastUsed is ISO string; sorting desc: use reverse later or negate with tuple trick
+        last_used = o.get("lastUsed") or ""
+        label = _primary_label(o.get("aliases") or [], o.get("username"))
+        return (is_def, last_used, label)
+
+    # We want lastUsed DESC, so sort ascending then reverse on lastUsed portion
+    # Easier: sort with key and reverse=True but would reverse default flag too.
+    # So do a two-pass stable sort:
+    orgs.sort(key=lambda o: _primary_label(o.get("aliases") or [], o.get("username")))
+    orgs.sort(key=lambda o: (o.get("lastUsed") or ""), reverse=True)
+    orgs.sort(key=lambda o: 0 if o.get("isDefaultUsername") else 1)
+
+    return orgs
+
 
 @router.get("/orgs")
 def get_orgs():
@@ -32,51 +131,7 @@ def get_orgs():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    recents = _load_recents()
-    recent_map = recents.get("orgs", {})
-    last_selected = recents.get("last_selected_alias")
+    payload = result.get("result") if isinstance(result, dict) else None
+    orgs = _normalize_orgs(payload or {})
 
-    # Flatten org list into a single list for UI convenience
-    orgs: List[Dict[str, Any]] = []
-    for group_key in ("scratchOrgs", "nonScratchOrgs", "other", "sandboxes", "devHubs"):
-        group = result.get(group_key)
-        if isinstance(group, list):
-            for o in group:
-                alias = o.get("alias") or o.get("username")
-                if not alias:
-                    continue
-                orgs.append({
-                    "alias": alias,
-                    "username": o.get("username"),
-                    "orgId": o.get("orgId") or o.get("id"),
-                    "isDefault": bool(o.get("isDefaultUsername") or o.get("isDefault")),
-                    "isDevHub": bool(o.get("isDevHub")),
-                    "connectedStatus": o.get("connectedStatus"),
-                    "lastSelectedAt": recent_map.get(alias, {}).get("lastSelectedAt"),
-                })
-
-    # Sort: recent first (descending), then alias
-    def sort_key(o: Dict[str, Any]):
-        ts = o.get("lastSelectedAt")
-        return (0 if ts else 1, -(int(datetime.fromisoformat(ts).timestamp()) if ts else 0), o["alias"].lower())
-
-    orgs.sort(key=sort_key)
-
-    return {"activeAlias": last_selected, "orgs": orgs}
-
-@router.post("/orgs/select")
-def select_org(body: SelectOrgBody):
-    recents = _load_recents()
-    alias = body.alias.strip()
-    now = datetime.now(timezone.utc).astimezone().isoformat()
-
-    recents["last_selected_alias"] = alias
-    recents.setdefault("orgs", {})
-    recents["orgs"][alias] = {"lastSelectedAt": now}
-    _save_recents(recents)
-    return {"activeAlias": alias, "lastSelectedAt": now}
-
-@router.get("/orgs/active")
-def active_org():
-    recents = _load_recents()
-    return {"activeAlias": recents.get("last_selected_alias")}
+    return {"orgs": orgs}
